@@ -2,7 +2,7 @@
 #####################################
 # Requires binfm_misc registration
 # https://github.com/multiarch/qemu-user-static#binfmt_misc-register
-ARG DOTNET_VERSION=5.0
+ARG DOTNET_VERSION=6.0
 
 
 FROM node:lts-alpine as web-builder
@@ -26,6 +26,9 @@ ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn
 ENV NVIDIA_DRIVER_CAPABILITIES="compute,video,utility"
 
 COPY --from=qemu /usr/bin/qemu-aarch64-static /usr/bin
+
+
+# curl: healcheck
 RUN apt-get update && apt-get install --no-install-recommends --no-install-suggests -y \
  libssl-dev \
  ca-certificates \
@@ -34,6 +37,7 @@ RUN apt-get update && apt-get install --no-install-recommends --no-install-sugge
  libomxil-bellagio0 \
  libomxil-bellagio-bin \
  locales \
+ curl \
  && apt-get clean autoclean -y \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/* \
@@ -41,7 +45,7 @@ RUN apt-get update && apt-get install --no-install-recommends --no-install-sugge
  && chmod 777 /cache /config /media \
  && sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen
 
-ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+# ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 ENV LC_ALL en_US.UTF-8
 ENV LANG en_US.UTF-8
 ENV LANGUAGE en_US:en
@@ -56,6 +60,8 @@ RUN find . -type d -name obj | xargs -r rm -r
 RUN dotnet publish Jellyfin.Server --configuration Release --output="/jellyfin" --self-contained --runtime linux-arm64 "-p:DebugSymbols=false;DebugType=none"
 
 FROM app
+	
+ENV HEALTHCHECK_URL=http://localhost:8096/health
 
 COPY --from=builder /jellyfin /jellyfin
 COPY --from=web-builder /dist /jellyfin/jellyfin-web
@@ -65,8 +71,12 @@ COPY scripts/ffmpeg-jetson-wrapper /usr/bin/ffmpeg-jetson-wrapper
 RUN chmod +x /usr/bin/ffmpeg-jetson-wrapper
 
 EXPOSE 8096
-VOLUME /cache /config /media
+VOLUME /cache /config
 ENTRYPOINT ["./jellyfin/jellyfin", \
     "--datadir", "/config", \
     "--cachedir", "/cache", \
     "--ffmpeg", "/usr/bin/ffmpeg-jetson-wrapper"]
+
+
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
+     CMD curl -Lk "${HEALTHCHECK_URL}" || exit 1
